@@ -427,6 +427,8 @@
       workDone: [784, 659, 523],   // ソ・ミ・ド：作業の時間が終わった（ひと息つこう）。延長中のお知らせにも使います
       breakDone: [523, 659, 784],  // ド・ミ・ソ：休憩が終わった（さあ、がんばろう）
     };
+    const ALARM_REPEAT = 3;        // お知らせの音を、何回くり返して鳴らすか
+    const ALARM_GAP_SECONDS = 1.4; // くり返すとき、1回目の鳴りはじめから次の鳴りはじめまでの秒数
 
     // --- 時間の設定 ---
     // 選べる範囲（いちばん短い・長い時間）は、HTML のスライダーの min と max で決めています
@@ -749,12 +751,13 @@
       }
     }
 
-    // 短いチャイムを鳴らします。frequencies は、鳴らす音の高さの並びです
-    function playChime(frequencies) {
+    // 短いチャイムを鳴らします。frequencies は、鳴らす音の高さの並びです。
+    // delaySeconds を渡すと、その秒数だけ待ってから鳴らします（くり返し鳴らすときに使います）
+    function playChime(frequencies, delaySeconds = 0) {
       if (audioContext === null) {
         return;  // 準備ができていなければ、鳴らしません
       }
-      const now = audioContext.currentTime;  // 音の世界の「今の時刻」（秒）
+      const now = audioContext.currentTime + delaySeconds;  // 音の世界の「今の時刻」（秒）に、待つ秒数を足します
 
       // forEach は、並びの1つ1つについて同じ処理をくり返す書き方です。index は 0, 1, 2 … と数えます
       frequencies.forEach((frequency, index) => {
@@ -908,10 +911,14 @@
       updateDisplay();
     }
 
-    // 今のモードの時間が終わったことを知らせる音を鳴らします（作業と休憩で、音がちがいます）
+    // 今のモードの時間が終わったことを知らせる音を、ALARM_REPEAT 回くり返して鳴らします（作業と休憩で、音がちがいます）
     function playDoneChime() {
       // 「条件 ? A : B」は「条件が正しければ A、ちがえば B」という書き方です
-      playChime(mode === 'work' ? CHIMES.workDone : CHIMES.breakDone);
+      const frequencies = mode === 'work' ? CHIMES.workDone : CHIMES.breakDone;
+      for (let i = 0; i < ALARM_REPEAT; i++) {
+        // 1回目はすぐ、2回目は ALARM_GAP_SECONDS 秒後、3回目はその倍 … と予約して鳴らします
+        playChime(frequencies, i * ALARM_GAP_SECONDS);
+      }
     }
 
     // 今のモード（作業・休憩・たっぷり休憩）の時間が終わったときの処理です
