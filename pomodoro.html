@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <!-- 文字化けしないように、文字コードを UTF-8 にします -->
+  <meta charset="UTF-8">
+  <!-- スマホで開いても、画面の幅に合わせて表示されるようにします -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ポモドーロタイマー</title>
+
+  <style>
+    /* ===== ここから CSS（見た目のデザイン）です ===== */
+
+    /* 色をまとめて決めておく場所です。
+       「--名前」の形のものを「CSS変数」といい、var(--名前) で使えます。
+       状態によって色を変えるときは、下の body[data-mode=…] で、ここの値を上書きします。 */
+    :root {
+      --bg-color: #fdecea;      /* 画面全体の背景色（作業中の薄い赤） */
+      --main-color: #d9483b;    /* ボタンや文字の主な色（作業中の赤） */
+      --card-color: #ffffff;    /* 真ん中のカードの色 */
+      --text-color: #333333;    /* ふつうの文字の色 */
+      --sub-text-color: #666666; /* 目立たせなくてよい文字の色 */
+    }
+
+    /* --- 状態ごとの色 ---
+       JavaScript が body に data-mode="work" などの印をつけるので、それに合わせて色を切り替えます */
+    body[data-mode="work"] {        /* 作業：赤系 */
+      --bg-color: #fdecea;
+      --main-color: #d9483b;
+    }
+    body[data-mode="shortBreak"] {  /* 短い休憩：緑系 */
+      --bg-color: #e6f4ea;
+      --main-color: #2e8b57;
+    }
+    body[data-mode="longBreak"] {   /* たっぷり休憩：青系 */
+      --bg-color: #e3effb;
+      --main-color: #2f6fb5;
+    }
+
+    /* 画面全体の設定です */
+    body {
+      margin: 0;
+      min-height: 100vh;               /* 画面の高さいっぱいに広げる */
+      display: flex;                   /* 中のカードを真ん中に置くための指定 */
+      justify-content: center;         /* 横方向の真ん中 */
+      align-items: center;             /* 縦方向の真ん中 */
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+      transition: background-color 0.6s;  /* 色が変わるとき、0.6秒かけてなめらかに変える */
+    }
+
+    /* 真ん中の白いカードです */
+    .card {
+      background-color: var(--card-color);
+      width: 100%;
+      max-width: 420px;                /* 広い画面でも、横に広がりすぎないようにする */
+      margin: 16px;
+      padding: 32px 24px;
+      border-radius: 20px;             /* 角を丸くする */
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);  /* うっすら影をつける */
+      text-align: center;
+    }
+
+    /* いちばん上の、モードを切り替える3つのタブを並べる箱 */
+    .tabs {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;                 /* 幅が足りないときは、折り返して次の行に並べる */
+      gap: 6px;
+    }
+
+    /* タブ1つ1つ。ふつうのボタンより少し小さくします */
+    .tabs button {
+      font-size: 14px;
+      padding: 6px 12px;
+    }
+
+    /* 今のモードのタブは、塗りつぶして目立たせます */
+    .tabs button.active {
+      background-color: var(--main-color);
+      color: #ffffff;
+      font-weight: bold;
+    }
+
+    /* 残り時間「25:00」の大きな表示 */
+    .time {
+      font-size: 80px;
+      font-weight: bold;
+      margin: 8px 0 24px;
+      font-variant-numeric: tabular-nums;  /* 数字の幅をそろえて、カウント中に文字がガタガタ動かないようにする */
+    }
+
+    /* ボタンを横に並べる箱 */
+    .buttons {
+      display: flex;
+      justify-content: center;
+      gap: 8px;                        /* ボタンとボタンのすき間 */
+      margin-bottom: 12px;
+    }
+
+    /* ボタンの共通デザイン */
+    button {
+      font-size: 16px;
+      padding: 10px 16px;
+      border: 2px solid var(--main-color);
+      border-radius: 999px;            /* 大きな値にすると、端が丸い「カプセル形」になる */
+      background-color: #ffffff;
+      color: var(--main-color);
+      cursor: pointer;                 /* マウスを乗せたとき、指の形のカーソルにする */
+      font-family: inherit;
+      transition: background-color 0.6s, color 0.6s, border-color 0.6s;
+    }
+
+    /* マウスを乗せたときに、少し色を変える */
+    button:hover {
+      background-color: var(--bg-color);
+    }
+
+    /* スタートボタンだけは、目立つように塗りつぶす */
+    button.primary {
+      background-color: var(--main-color);
+      color: #ffffff;
+    }
+
+    /* 押せないボタン（disabled）の見た目 */
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* 延長しているときは、時間の数字を今の状態の色にして、いつもとちがうことが分かるようにします */
+    .time.overtime {
+      color: var(--main-color);
+    }
+
+    /* お知らせ（延長中のお知らせと、4回連続のお知らせ） */
+    .message {
+      font-size: 15px;
+      font-weight: bold;
+      color: var(--main-color);
+      background-color: var(--bg-color);
+      padding: 10px;
+      border-radius: 10px;
+      margin: 12px 0 0;
+      white-space: pre-line;           /* 文字の中の改行（\n）で、そのまま行を分ける */
+    }
+
+    /* hidden がついているときは、確実に見えなくします
+       （上の .message の指定より、こちらを優先させるための書き方です） */
+    .message[hidden] {
+      display: none;
+    }
+
+    /* 時間の設定欄 */
+    /* grid は、部品を表（マス目）のように並べる指定です。
+       「名前｜スライダー｜〇分」の3列にします。1fr は「残りの幅をぜんぶ使う」という意味です */
+    .settings {
+      display: grid;
+      grid-template-columns: auto 1fr 3.5em;
+      align-items: center;
+      gap: 10px 12px;
+      margin: 24px 0;
+      font-size: 14px;
+      text-align: left;
+    }
+
+    /* スライダー（つまみを左右に動かして選ぶ部品）。
+       ブラウザが最初から描く見た目（枠線つき）を appearance: none で消して、自分で描き直します */
+    .settings input[type="range"] {
+      appearance: none;
+      -webkit-appearance: none;        /* 古い書き方。ブラウザによってはこちらが必要です */
+      width: 100%;
+      height: 6px;
+      margin: 0;
+      border: none;
+      border-radius: 999px;
+      /* 線の色。左から --fill の位置までを今の状態の色、そこから右をうすい灰色にします。
+         --fill は、JavaScript がつまみの位置に合わせて入れます（例：50%） */
+      background: linear-gradient(to right,
+        var(--main-color) var(--fill, 0%),
+        #e6e6e6 var(--fill, 0%));
+      cursor: pointer;
+    }
+
+    /* つまみ（Chrome・Edge・Safari 用）。::-webkit-slider-thumb は「スライダーのつまみ」という意味です */
+    .settings input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border: none;
+      border-radius: 50%;              /* まん丸にする */
+      background-color: var(--main-color);
+    }
+
+    /* つまみ（Firefox 用）。ブラウザによって書き方がちがうので、両方書いておきます */
+    .settings input[type="range"]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border: none;
+      border-radius: 50%;
+      background-color: var(--main-color);
+    }
+
+    /* 線（Firefox 用）。Firefox は線の部分にも枠をつけることがあるので、消しておきます */
+    .settings input[type="range"]::-moz-range-track {
+      border: none;
+      background: transparent;
+    }
+
+    /* 動かせないとき（今カウントしているモードのスライダー）の見た目 */
+    .settings input[type="range"]:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* スライダーの右の「25分」の表示 */
+    .settings output {
+      text-align: right;
+      font-variant-numeric: tabular-nums;  /* 数字の幅をそろえて、動かしたときに文字がずれないようにする */
+    }
+
+    /* 集めたトマトの表示 */
+    .tomatoes {
+      font-size: 24px;
+      min-height: 32px;                /* トマトが0個のときも、高さが急に変わらないようにする */
+      margin: 0 0 8px;
+      word-break: break-all;           /* トマトが多いときは、途中で折り返す */
+    }
+
+    /* トマト1つ1つ（📦 🧺 🍅）。動きをつけるために inline-block にします */
+    .tomatoes .item {
+      display: inline-block;
+    }
+
+    /* トマトがまだ0個のときの案内 */
+    .tomatoes .hint {
+      font-size: 14px;
+      color: var(--sub-text-color);
+    }
+
+    /* 増えたトマトを「ぽよん」と弾ませる動き。
+       @keyframes で、動きの途中の様子（0% → 60% → 100%）を決めます */
+    @keyframes pop {
+      0%   { transform: scale(0.2); }
+      60%  { transform: scale(1.4); }
+      100% { transform: scale(1); }
+    }
+    .tomatoes .pop {
+      animation: pop 0.6s ease-out;
+    }
+
+    /* パソコンの設定で「動きを減らす」にしている人には、動きをつけません */
+    @media (prefers-reduced-motion: reduce) {
+      .tomatoes .pop {
+        animation: none;
+      }
+      body, button {
+        transition: none;
+      }
+    }
+
+    /* トマトの下の、たまり方の説明 */
+    .tomato-guide {
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--sub-text-color);
+      margin: 0 0 12px;
+    }
+
+    /* 集中した時間の表示 */
+    .focus-time {
+      font-size: 14px;
+      color: var(--sub-text-color);
+      margin: 0;
+    }
+
+    /* 作業の途中でタブを押したときの確認画面。
+       <dialog> は、ページの上に重ねて出す小さな画面を作るための部品です */
+    .confirm-dialog {
+      border: none;
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 320px;
+      text-align: center;
+      color: var(--text-color);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
+
+    .confirm-dialog p {
+      margin: 0 0 20px;
+      line-height: 1.6;
+    }
+
+    .confirm-dialog .buttons {
+      margin-bottom: 0;
+    }
+
+    /* 確認画面の後ろを、うっすら暗くします（::backdrop は「後ろの幕」という意味です） */
+    .confirm-dialog::backdrop {
+      background-color: rgba(0, 0, 0, 0.3);
+    }
+  </style>
+</head>
+
+<body data-mode="work">
+  <!-- ===== ここから HTML（画面に置くもの）です ===== -->
+  <!-- 全体を、真ん中の白いカードに入れます -->
+  <main class="card">
+
+    <!-- モードを切り替えるタブ。今のモードのタブが塗りつぶされます。
+         data-mode="…" は、JavaScript が「どのモードのタブか」を見分けるための印です -->
+    <div class="tabs">
+      <button class="active" data-mode="work">作業 🔥</button>
+      <button data-mode="shortBreak">休憩 🍵</button>
+      <button data-mode="longBreak">たっぷり休憩 ☕</button>
+    </div>
+
+    <!-- 残り時間 -->
+    <p class="time" id="time">25:00</p>
+
+    <!-- 操作ボタン -->
+    <div class="buttons">
+      <button class="primary" id="startButton">スタート</button>
+      <button id="pauseButton">一時停止</button>
+      <button id="resetButton">リセット</button>
+    </div>
+
+    <!-- お知らせ（延長中・4回連続）。中身は JavaScript が作ります。hidden がついている間は表示されません -->
+    <p class="message" id="message" hidden></p>
+
+    <!-- 時間の設定（分単位）。type="range" がスライダーです。
+         min と max で選べる範囲、step で1目もりの大きさを決めます。
+         保存してある設定があれば、JavaScript が入れ直します -->
+    <div class="settings">
+      <label for="workMinutes">作業</label>
+      <input type="range" id="workMinutes" min="5" max="60" step="5" value="25">
+      <output id="workMinutesValue" for="workMinutes">25分</output>
+
+      <label for="shortBreakMinutes">休憩</label>
+      <input type="range" id="shortBreakMinutes" min="5" max="30" step="5" value="5">
+      <output id="shortBreakMinutesValue" for="shortBreakMinutes">5分</output>
+
+      <label for="longBreakMinutes">たっぷり休憩</label>
+      <input type="range" id="longBreakMinutes" min="5" max="60" step="5" value="15">
+      <output id="longBreakMinutesValue" for="longBreakMinutes">15分</output>
+    </div>
+
+    <!-- 集めたトマト（中身は JavaScript が作ります） -->
+    <p class="tomatoes" id="tomatoes"></p>
+
+    <!-- トマトのたまり方の説明（中身は JavaScript が作ります） -->
+    <p class="tomato-guide" id="tomatoGuide"></p>
+
+    <!-- 集中した時間（中身は JavaScript が作ります） -->
+    <p class="focus-time" id="focusTime"></p>
+
+  </main>
+
+  <!-- 作業の途中でタブを押したときの確認画面。ふだんは隠れていて、JavaScript が showModal() で出します。
+       最初に選ばれているのは「作業を続ける」なので、うっかり Enter を押しても切り替わりません -->
+  <dialog class="confirm-dialog" id="confirmDialog">
+    <p>作業の途中です。<br>切り替えると、この作業は 🍅 になりません。</p>
+    <div class="buttons">
+      <button class="primary" id="confirmCancelButton">作業を続ける</button>
+      <button id="confirmOkButton">切り替える</button>
+    </div>
+  </dialog>
+
+  <script>
+    // ===== ここから JavaScript（動き）です =====
+
+    // --- 画面の部品を、id を使って取り出しておきます ---
+    // document.getElementById('名前') で、HTML の id="名前" の部品をつかめます。
+    // querySelectorAll は、条件に合う部品をまとめて取り出します。ここでは3つのタブです
+    const modeTabs = document.querySelectorAll('.tabs button');
+    const timeDisplay = document.getElementById('time');
+    const startButton = document.getElementById('startButton');
+    const pauseButton = document.getElementById('pauseButton');
+    const resetButton = document.getElementById('resetButton');
+    const messageDisplay = document.getElementById('message');
+    const tomatoesDisplay = document.getElementById('tomatoes');
+    const tomatoGuideDisplay = document.getElementById('tomatoGuide');
+    const focusTimeDisplay = document.getElementById('focusTime');
+    const confirmDialog = document.getElementById('confirmDialog');
+    const confirmOkButton = document.getElementById('confirmOkButton');
+    const confirmCancelButton = document.getElementById('confirmCancelButton');
+    // 時間の設定のスライダーは、モードの名前（work など）で取り出せるように、オブジェクトにまとめておきます
+    const settingInputs = {
+      work: document.getElementById('workMinutes'),
+      shortBreak: document.getElementById('shortBreakMinutes'),
+      longBreak: document.getElementById('longBreakMinutes'),
+    };
+    // スライダーの右にある「25分」の表示も、同じようにまとめておきます
+    const settingValueDisplays = {
+      work: document.getElementById('workMinutesValue'),
+      shortBreak: document.getElementById('shortBreakMinutesValue'),
+      longBreak: document.getElementById('longBreakMinutesValue'),
+    };
+
+    // --- モード（今が作業なのか、休憩なのか）ごとの表示の文字です ---
+    // { 名前: 値, … } の形を「オブジェクト」といいます。MODE_LABELS.work で「作業中 🔥」を取り出せます。
+    // たっぷり休憩は、コードの中では longBreak（英語で「長い休憩」）という名前で呼んでいます
+    const MODE_LABELS = {
+      work: '作業中 🔥',
+      shortBreak: '休憩中 🍵',
+      longBreak: 'たっぷり休憩中 ☕',
+    };
+    // 時間が終わったあと、延長しているときの表示の文字です（ブラウザのタブの名前に使います）
+    const OVERTIME_LABELS = {
+      work: '作業を延長中 🔥',
+      shortBreak: '休憩を延長中 🍵',
+      longBreak: 'たっぷり休憩を延長中 ☕',
+    };
+
+    // 何回連続で作業をやり切ったら、お知らせを出すか
+    const STREAK_FOR_MESSAGE = 4;
+
+    // 作業をやり切ったとき、何分ごとに 🍅 を1個にするか
+    const MINUTES_PER_TOMATO = 5;
+
+    // 作業の時間が終わったあと、休憩に入らずに延長していたら、何ミリ秒ごとにもう一度お知らせするか（5分）
+    const REMINDER_INTERVAL_MS = 5 * 60 * 1000;
+
+    // --- お知らせの音 ---
+    // 数字は音の高さ（周波数。単位はヘルツ）です。523 がド、659 がミ、784 がソ。
+    const CHIMES = {
+      workDone: [784, 659, 523],   // ソ・ミ・ド：作業の時間が終わった（ひと息つこう）。延長中のお知らせにも使います
+      breakDone: [523, 659, 784],  // ド・ミ・ソ：休憩が終わった（さあ、がんばろう）
+    };
+
+    // --- 時間の設定 ---
+    // 選べる範囲（いちばん短い・長い時間）は、HTML のスライダーの min と max で決めています
+    const DEFAULT_SETTINGS = { work: 25, shortBreak: 5, longBreak: 15 };  // 最初の設定（分）
+    const SETTINGS_KEY = 'pomodoro-settings';  // localStorage に保存するときの名前（ラベル）
+
+    // --- 記録（トマトと集中時間） ---
+    const RECORDS_KEY = 'pomodoro-records';    // localStorage に保存するときの名前（ラベル）
+
+    // 今の設定（分）と記録。ページを開いたときに、保存してあるものを読み込みます
+    const settings = loadSettings();
+    const records = loadRecords();
+
+    // --- タイマーの状態を覚えておく変数（入れ物）です ---
+    let mode = 'work';                     // 今のモード。'work'（作業）／'shortBreak'（短い休憩）／'longBreak'（たっぷり休憩）
+    let remainingMs = getDurationMs(mode); // 残り時間（ミリ秒。1000ミリ秒 = 1秒）。延長中はマイナスになります
+    let currentMinutes = settings[mode];   // 今のモードが、全部で何分か（集中時間の記録に使います）
+    let endTime = null;                    // タイマーが終わる時刻。止まっているときは null（「なし」という意味）
+    let intervalId = null;                 // 表示を新しくするための、くり返し処理の番号
+    let finishTimeoutId = null;            // 次のお知らせの時刻ぴったりに呼ばれる処理の番号（下の scheduleNextEvent() で説明します）
+    let workStarted = false;               // 今の作業を、もう始めたかどうか（一時停止中も true のまま）
+    let timeUp = false;                    // 今のモードの時間が、もう終わったかどうか（true なら延長中）
+    let reminderCount = 0;                 // 延長中に、何回もう一度お知らせしたか
+    let pendingMode = null;                // 確認画面で「切り替える」を押したときに、切り替える先のモード
+    let workStreak = 0;                    // 作業を連続で何回やり切ったか（たっぷり休憩を取ると 0 に戻る）
+    let audioContext = null;               // 音を作るための道具（最初にボタンが押されたときに用意します）
+    let shownTomatoes = records.tomatoes;  // 画面に出している 🍅 の数（1個ずつ増やして見せるために、記録とは別に持ちます）
+
+
+    // ==================================================
+    //  時間の設定
+    // ==================================================
+
+    // 保存してあった分数を、そのスライダーで選べる値（5分きざみ・範囲内）に直して返します。
+    // key は 'work' などのモードの名前です。数ではない値のときは null を返します
+    function toValidMinutes(key, value) {
+      const number = Number(value);
+      // Number.isFinite は「ちゃんとした数かどうか」を調べます（空っぽや文字は false になります）
+      if (!Number.isFinite(number)) {
+        return null;
+      }
+      const min = Number(settingInputs[key].min);
+      const max = Number(settingInputs[key].max);
+      const step = Number(settingInputs[key].step);
+      // いちばん近い「step の倍数」にそろえます（例：32分 → 30分）。Math.round は「四捨五入」
+      const minutes = Math.round(number / step) * step;
+      // 範囲より小さければ min に、大きければ max にそろえます
+      // （前のバージョンで 90分 などを保存していても、60分 に直して使えるようにするためです）
+      return Math.min(max, Math.max(min, minutes));
+    }
+
+    // スライダーの位置と、右の「25分」の表示を、今の設定に合わせます
+    function showSetting(key) {
+      const input = settingInputs[key];
+      input.value = settings[key];
+      settingValueDisplays[key].textContent = settings[key] + '分';
+      // つまみが左はしから何%のところにあるかを計算して、CSS の --fill に入れます。
+      // CSS はこれを使って、つまみの左側の線を今の状態の色で塗ります
+      const percent = (settings[key] - input.min) / (input.max - input.min) * 100;
+      input.style.setProperty('--fill', percent + '%');
+    }
+
+    // localStorage から設定を読み込みます。保存がなければ、最初の設定を使います
+    function loadSettings() {
+      // { ...DEFAULT_SETTINGS } は、最初の設定をコピーした新しいオブジェクトを作る書き方です
+      const loaded = { ...DEFAULT_SETTINGS };
+      // try { … } catch { … } は「やってみて、失敗したら catch のほうに進む」という書き方です。
+      // ブラウザによっては localStorage が使えないことがあるので、そのときもアプリが止まらないようにします
+      try {
+        // localStorage には文字しか保存できないので、JSON という形の文字にして保存してあります。
+        // JSON.parse で、その文字をオブジェクトに戻します
+        const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+        if (saved) {
+          for (const key in loaded) {         // work, shortBreak, longBreak の順にくり返します
+            const minutes = toValidMinutes(key, saved[key]);
+            if (minutes !== null) {
+              loaded[key] = minutes;          // 正しい値のときだけ使います
+            }
+          }
+        }
+      } catch (error) {
+        // 読み込めなかったときは、最初の設定のままにします
+      }
+      return loaded;
+    }
+
+    // 今の設定を localStorage に保存します
+    function saveSettings() {
+      try {
+        // JSON.stringify で、オブジェクトを文字に変えて保存します
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      } catch (error) {
+        // 保存できなかったときは、何もしません（開いている間は、設定はそのまま使えます）
+      }
+    }
+
+    // スライダーが動かされたときの処理です。key は 'work' などのモードの名前です
+    function changeSetting(key) {
+      // スライダーは min〜max の整数しか選べないので、そのまま数にして使えます
+      const minutes = Number(settingInputs[key].value);
+      settings[key] = minutes;
+      showSetting(key);
+      saveSettings();
+
+      // まだ作業を始めていないときに「作業」を変えたら、残り時間の表示もすぐに変えます。
+      // それ以外（ほかのモードのスライダーや、一時停止中など）は、次にそのモードになったときから新しい時間を使います
+      if (key === 'work' && mode === 'work' && !workStarted) {
+        remainingMs = getDurationMs('work');
+        currentMinutes = minutes;
+        updateDisplay();
+      }
+    }
+
+    // モードに合わせた時間（ミリ秒）を返します
+    function getDurationMs(targetMode) {
+      return settings[targetMode] * 60 * 1000;
+    }
+
+
+    // ==================================================
+    //  記録（トマトと集中時間）
+    // ==================================================
+
+    // 今日の日付を「2026-11-03」のような文字で返します（パソコンの時計の日付を使います）
+    function getTodayString() {
+      const now = new Date();
+      const month = String(now.getMonth() + 1).padStart(2, '0');  // getMonth() は 0〜11 なので、1 を足します
+      const day = String(now.getDate()).padStart(2, '0');
+      return now.getFullYear() + '-' + month + '-' + day;
+    }
+
+    // 0 以上の整数かどうかを調べます（記録の読み込みで使います）
+    function isCount(value) {
+      return Number.isInteger(value) && value >= 0;
+    }
+
+    // localStorage から記録を読み込みます。保存がなければ、すべて 0 から始めます
+    function loadRecords() {
+      const loaded = {
+        tomatoes: 0,                  // 集めたトマトの数（ずっとたまっていく）
+        totalMinutes: 0,              // これまでの集中時間の合計（分）
+        todayDate: getTodayString(),  // 「今日の集中時間」が、何日の分か
+        todayMinutes: 0,              // 今日の集中時間（分）
+        todayTomatoes: 0,             // 今日集めたトマトの数
+      };
+      try {
+        const saved = JSON.parse(localStorage.getItem(RECORDS_KEY));
+        if (saved) {
+          if (isCount(saved.tomatoes)) loaded.tomatoes = saved.tomatoes;
+          if (isCount(saved.totalMinutes)) loaded.totalMinutes = saved.totalMinutes;
+          if (typeof saved.todayDate === 'string') loaded.todayDate = saved.todayDate;
+          if (isCount(saved.todayMinutes)) loaded.todayMinutes = saved.todayMinutes;
+          if (isCount(saved.todayTomatoes)) loaded.todayTomatoes = saved.todayTomatoes;
+        }
+      } catch (error) {
+        // 読み込めなかったときは、0 から始めます
+      }
+      return loaded;
+    }
+
+    // 今の記録を localStorage に保存します
+    function saveRecords() {
+      try {
+        localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+      } catch (error) {
+        // 保存できなかったときは、何もしません
+      }
+    }
+
+    // 日付が変わっていたら、「今日の集中時間」を 0 に戻します。
+    // 0時をまたいで開きっぱなしにしていても数え直せるように、1分ごとにも呼んでいます（いちばん下を見てください）
+    function checkNewDay() {
+      const today = getTodayString();
+      if (records.todayDate !== today) {
+        records.todayDate = today;
+        records.todayMinutes = 0;
+        records.todayTomatoes = 0;
+        saveRecords();
+        updateFocusTime();
+      }
+    }
+
+    // 集中時間（分）を、今日の分と合計に足します
+    function addFocusMinutes(minutes) {
+      if (minutes <= 0) {
+        return;  // 足すものがなければ、何もしません
+      }
+      checkNewDay();  // 先に日付を確かめて、日をまたいでいたら今日の分を 0 にしておきます
+      records.totalMinutes += minutes;  // += は「今の値に足す」という意味です
+      records.todayMinutes += minutes;
+      saveRecords();
+      updateFocusTime();
+    }
+
+    // 作業を最後までやり切ったときに呼ばれて、トマトを増やし、集中時間を足します。
+    // minutes は、やり切った作業の分数です。5分ごとに 🍅 が1個増えます
+    function addRecord(minutes) {
+      const newTomatoes = Math.floor(minutes / MINUTES_PER_TOMATO);  // 例：25分 → 5個
+      checkNewDay();  // 先に日付を確かめて、日をまたいでいたら今日の分を 0 にしておきます
+      records.tomatoes += newTomatoes;
+      records.todayTomatoes += newTomatoes;
+      saveRecords();  // 記録は、先にまとめて保存しておきます
+      addFocusMinutes(minutes);
+
+      // 画面のほうは、0.35秒おきに1個ずつ増やして、1つずつ増えていく様子を見せます。
+      // setTimeout(処理, ミリ秒) は「この時間がたったら、1回だけ処理をしてね」という予約です
+      for (let i = 1; i <= newTomatoes; i++) {
+        setTimeout(() => {
+          shownTomatoes++;
+          updateTomatoes(true);  // true は「増えたものを弾ませてね」という合図です
+          updateFocusTime();     // 集中時間の行の「🍅〇個」も一緒に増やします
+        }, i * 350);
+      }
+    }
+
+    // 集めたトマトを、📦（100個）🧺（10個）🍅（1個）にまとめて表示します。
+    // 例：123個 → 📦 🧺🧺 🍅🍅🍅
+    // animateNewest が true のときは、いちばん最後のもの（＝今増えたもの）を弾ませます
+    function updateTomatoes(animateNewest) {
+      const count = shownTomatoes;  // 画面に出している数（1個ずつ増やしている途中は、記録より少なくなります）
+      tomatoesDisplay.textContent = '';  // いったん中身を空にします
+      tomatoesDisplay.title = '🍅 ' + count + '個';  // マウスを乗せると、合計の個数が見えます
+
+      if (count === 0) {
+        // まだ1つもないときは、案内を出します
+        const hint = document.createElement('span');
+        hint.className = 'hint';
+        hint.textContent = 'ここに 🍅 がたまっていきます';
+        tomatoesDisplay.appendChild(hint);
+        return;
+      }
+
+      // [絵文字, 個数] の組を、大きいほうから並べます。
+      // Math.floor は「切り捨て」、% は「割った余り」です
+      const groups = [
+        ['📦', Math.floor(count / 100)],        // 100個で 📦 1つ
+        ['🧺', Math.floor((count % 100) / 10)], // 100で割った余りを、10個ずつ 🧺 に
+        ['🍅', count % 10],                     // 10で割った余りが 🍅
+      ];
+
+      let lastItem = null;  // いちばん最後に置いた絵文字（＝今増えたもの）
+      for (const [emoji, amount] of groups) {
+        if (amount === 0) {
+          continue;  // 0個の種類は飛ばします（continue は「次のくり返しへ進む」という意味です）
+        }
+        // 種類と種類の間には、すき間を1つ入れます
+        if (lastItem !== null) {
+          tomatoesDisplay.appendChild(document.createTextNode(' '));
+        }
+        for (let i = 0; i < amount; i++) {
+          // document.createElement で新しい部品（ここでは span）を作り、appendChild で画面に入れます
+          const item = document.createElement('span');
+          item.className = 'item';
+          item.textContent = emoji;
+          tomatoesDisplay.appendChild(item);
+          lastItem = item;
+        }
+      }
+
+      // 大きいほうから並べているので、いちばん最後のものが、いま増えたものです。
+      // （🍅 が10個そろって 🧺 になったときは、最後の 🧺 が新しいものになります）
+      if (animateNewest) {
+        lastItem.classList.add('pop');
+      }
+    }
+
+    // トマトの下に、たまり方の説明を出します（ページを開いたときに1回だけ呼びます）。
+    // 「5分」の数字は MINUTES_PER_TOMATO から作るので、そちらを変えれば説明も合わせて変わります
+    function showTomatoGuide() {
+      tomatoGuideDisplay.textContent =
+        MINUTES_PER_TOMATO + '分 → 🍅　🍅×10 → 🧺　🧺×10 → 📦';
+    }
+
+    // 分を「12時間」「1時間30分」「45分」のような文字にします
+    function formatMinutes(totalMinutes) {
+      if (totalMinutes < 60) {
+        return totalMinutes + '分';
+      }
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return minutes === 0 ? hours + '時間' : hours + '時間' + minutes + '分';
+    }
+
+    // 「今日：75分（🍅15個） / 合計：3時間5分（🍅37個）」の表示を新しくします。
+    // 🍅 の個数は、画面に出している数（shownTomatoes）に合わせるので、1個ずつ増えるときも上の 🍅 と同じ速さで増えます
+    function updateFocusTime() {
+      // まだ画面に出していない（これから1個ずつ増やす）🍅 の数です
+      const waiting = records.tomatoes - shownTomatoes;
+      // 今日の数からも、まだ出していない分を引いておきます（マイナスにはしません）
+      const shownToday = Math.max(0, records.todayTomatoes - waiting);
+      focusTimeDisplay.textContent =
+        '今日：' + records.todayMinutes + '分（🍅' + shownToday + '個） / ' +
+        '合計：' + formatMinutes(records.totalMinutes) + '（🍅' + shownTomatoes + '個）';
+    }
+
+
+    // ==================================================
+    //  音（Web Audio API）
+    // ==================================================
+
+    // 音を出す準備をします。
+    // ブラウザは「人がボタンを押す前に音を出すこと」を止めるので、ボタンが押されたときに呼びます
+    function prepareAudio() {
+      try {
+        if (audioContext === null) {
+          audioContext = new AudioContext();
+        }
+        if (audioContext.state === 'suspended') {
+          audioContext.resume();  // 一時的に止められていたら、動かし直します
+        }
+      } catch (error) {
+        // 音が使えないブラウザでは、音なしで動かします
+      }
+    }
+
+    // 短いチャイムを鳴らします。frequencies は、鳴らす音の高さの並びです
+    function playChime(frequencies) {
+      if (audioContext === null) {
+        return;  // 準備ができていなければ、鳴らしません
+      }
+      const now = audioContext.currentTime;  // 音の世界の「今の時刻」（秒）
+
+      // forEach は、並びの1つ1つについて同じ処理をくり返す書き方です。index は 0, 1, 2 … と数えます
+      frequencies.forEach((frequency, index) => {
+        const startAt = now + index * 0.25;  // 0.25秒ずつずらして、順番に鳴らします
+
+        // オシレーター（音のもとになる波を作る道具）。sine は、やわらかい「ポーン」という音です
+        const oscillator = audioContext.createOscillator();
+        oscillator.type = 'sine';
+        oscillator.frequency.value = frequency;
+
+        // ゲイン（音の大きさを変える道具）。最初に少し大きくして、だんだん小さくして消します
+        const gain = audioContext.createGain();
+        gain.gain.setValueAtTime(0.0001, startAt);
+        gain.gain.exponentialRampToValueAtTime(0.3, startAt + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.6);
+
+        // 「オシレーター → ゲイン → スピーカー」とつなぎます
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(startAt);
+        oscillator.stop(startAt + 0.6);
+      });
+    }
+
+
+    // ==================================================
+    //  タイマー
+    // ==================================================
+
+    // モードを切り替えて、そのモードの時間をセットします
+    function switchMode(newMode) {
+      mode = newMode;
+      remainingMs = getDurationMs(mode);
+      currentMinutes = settings[mode];
+      workStarted = false;  // 新しいモードになったので、「まだ始めていない」に戻します
+      timeUp = false;       // 延長も終わりです
+      reminderCount = 0;
+      // 今のモードのタブにだけ active という印をつけます。CSS がこれを見て、塗りつぶします
+      for (const tab of modeTabs) {
+        // classList.toggle('名前', 条件) は「条件が正しければ印をつけ、ちがえば外す」という意味です
+        tab.classList.toggle('active', tab.dataset.mode === mode);
+      }
+      // body に data-mode="work" などの印をつけます。CSS がこれを見て、画面の色を変えます
+      document.body.dataset.mode = mode;
+      updateDisplay();
+      updateButtons();
+      updateMessage();
+    }
+
+    // お知らせ（延長中のお知らせと、4回連続のお知らせ）を、今の状態に合わせて出したり消したりします
+    function updateMessage() {
+      const lines = [];  // 出したいお知らせを、1行ずつここに入れていきます
+
+      if (timeUp) {
+        const extraMinutes = reminderCount * REMINDER_INTERVAL_MS / 60000;  // 延長した分数（5, 10, …）
+        if (mode === 'work') {
+          if (reminderCount === 0) {
+            lines.push('🍅 ゲット！切りのいいところで「休憩」タブを押してね');
+          } else {
+            lines.push('+' + extraMinutes + '分 延長中です。そろそろ休憩しませんか？');
+          }
+        } else {
+          if (reminderCount === 0) {
+            lines.push('休憩おわり！準備ができたら「作業」タブを押してね');
+          } else {
+            lines.push('+' + extraMinutes + '分 休憩を延長中です。そろそろ作業に戻りませんか？');
+          }
+        }
+      }
+      if (workStreak >= STREAK_FOR_MESSAGE) {
+        lines.push('4回連続でがんばりました！たっぷり休憩はいかが？');
+      }
+
+      // join('\n') で、行と行の間に改行をはさんで1つの文字にします
+      messageDisplay.textContent = lines.join('\n');
+      // hidden が true だと見えなくなります。お知らせが1つもなければ隠します
+      messageDisplay.hidden = lines.length === 0;
+    }
+
+    // 秒を「05:09」の形の文字にします
+    function formatClock(totalSeconds) {
+      const minutes = Math.floor(totalSeconds / 60);  // 分（Math.floor は「切り捨て」）
+      const seconds = totalSeconds % 60;              // 秒（% は「割った余り」）
+      // padStart(2, '0') で、「5」を「05」のように2けたにそろえます
+      return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    }
+
+    // 残り時間を「25:00」の形にして、画面に表示します。延長中は「+03:12」のように、延長した時間を出します
+    function updateDisplay() {
+      let timeText;
+      let label;
+      if (remainingMs < 0) {
+        // 延長中：マイナスの残り時間を、プラスの「延長した時間」に直して表示します
+        timeText = '+' + formatClock(Math.floor(-remainingMs / 1000));
+        label = OVERTIME_LABELS[mode];
+      } else {
+        // ミリ秒を秒に直します。Math.ceil は「切り上げ」。
+        // 切り上げにすると、残り 0.5 秒のときも「00:01」と表示され、0 になった瞬間に「00:00」になります
+        timeText = formatClock(Math.ceil(remainingMs / 1000));
+        label = MODE_LABELS[mode];
+      }
+      timeDisplay.textContent = timeText;
+      // 延長中だけ overtime という印をつけて、CSS で数字の色を変えます
+      timeDisplay.classList.toggle('overtime', remainingMs < 0);
+      // ブラウザのタブの名前にも出して、別のタブを見ていても残り時間が分かるようにします
+      document.title = timeText + ' ' + label;
+    }
+
+    // ボタンを押せる／押せないを、今の状態に合わせて切り替えます
+    function updateButtons() {
+      const isRunning = intervalId !== null;  // 動いているかどうか（true か false）
+      startButton.disabled = isRunning;       // 動いている間は、スタートを押せない
+      pauseButton.disabled = !isRunning;      // 止まっている間は、一時停止を押せない（! は「反対」の意味）
+
+      // 時間の設定は、いつでも変えられます。
+      // ただし、今カウントしているモードのスライダーだけは、動いている間は動かせないようにします
+      // （動かしても今のカウントは変わらないので、まぎらわしいからです。一時停止中は動かせます）
+      for (const key in settingInputs) {
+        settingInputs[key].disabled = isRunning && key === mode;
+      }
+    }
+
+    // 定期的に呼ばれて、残り時間を計算し直します
+    function tick() {
+      // 「終わる時刻 − 今の時刻」で残り時間を出します。
+      // 1秒ずつ引くやり方より、時計がずれにくくなります。終わる時刻を過ぎるとマイナスになります
+      remainingMs = endTime - Date.now();
+
+      if (!timeUp && remainingMs <= 0) {
+        // 時間が終わりました。次のモードには自動で切り替えず、そのまま延長を数え続けます
+        finishTime();
+      } else if (timeUp && -remainingMs >= (reminderCount + 1) * REMINDER_INTERVAL_MS) {
+        // 延長が 5分、10分 … に届いたら、もう一度お知らせします
+        reminderCount++;
+        playDoneChime();
+        updateMessage();
+        scheduleNextEvent();
+      }
+      updateDisplay();
+    }
+
+    // 今のモードの時間が終わったことを知らせる音を鳴らします（作業と休憩で、音がちがいます）
+    function playDoneChime() {
+      // 「条件 ? A : B」は「条件が正しければ A、ちがえば B」という書き方です
+      playChime(mode === 'work' ? CHIMES.workDone : CHIMES.breakDone);
+    }
+
+    // 今のモード（作業・休憩・たっぷり休憩）の時間が終わったときの処理です
+    function finishTime() {
+      timeUp = true;
+      if (mode === 'work') {
+        // 作業を最後までやり切ったので、連続の回数を1増やします（++ は「1増やす」という意味）
+        workStreak++;
+        addRecord(currentMinutes);  // トマトを1つ増やし、集中時間を足します
+      }
+      playDoneChime();       // お知らせの音
+      updateMessage();       // 「🍅 ゲット！」や「休憩おわり！」のお知らせを出します
+      scheduleNextEvent();   // 次は、5分後のお知らせを予約します
+    }
+
+    // 作業の延長時間（1分未満は切り捨て）を、集中時間に足します。休憩の延長は足しません。
+    // 延長中にタブを切り替えたり、リセットしたりしたときに呼びます
+    function recordOvertime() {
+      if (!(mode === 'work' && timeUp)) {
+        return;  // 作業の延長中でなければ、何もしません
+      }
+      if (intervalId !== null) {
+        remainingMs = endTime - Date.now();  // 動いているときは、今の延長時間を計算し直します
+      }
+      addFocusMinutes(Math.floor(-remainingMs / 60000));  // 60000ミリ秒 = 1分
+    }
+
+    // 次に「何かが起きる時刻」（作業や休憩の終わり、延長中のお知らせ）に、tick() を1回呼ぶ予約をします。
+    // ブラウザは、見ていないタブのくり返し処理を、最大1分おきまで遅らせることがあります。
+    // そうなるとお知らせの音がおくれてしまうので、setTimeout(処理, ミリ秒) で
+    // 「この時刻ちょうどに1回だけ呼んでね」という予約もしておきます
+    function scheduleNextEvent() {
+      clearTimeout(finishTimeoutId);  // 前の予約があれば取り消します
+      let msUntilNext;
+      if (timeUp) {
+        // 延長中：次のお知らせ（5分、10分 …）までの時間です
+        msUntilNext = (reminderCount + 1) * REMINDER_INTERVAL_MS + remainingMs;
+      } else {
+        // それ以外：終わる時刻までの時間です
+        msUntilNext = remainingMs;
+      }
+      // 少しだけ（0.02秒）遅めに呼んで、確実に時刻を過ぎてから tick() が動くようにします
+      finishTimeoutId = setTimeout(tick, Math.max(0, msUntilNext) + 20);
+    }
+
+    // タイマーを止めます（一時停止とリセットの両方で使う、共通の処理です）
+    function stopTimer() {
+      clearInterval(intervalId);     // くり返しを止めます
+      clearTimeout(finishTimeoutId); // 「終わる時刻に呼ぶ予約」も取り消します
+      intervalId = null;
+      finishTimeoutId = null;
+      endTime = null;
+      updateButtons();
+    }
+
+    // ［スタート］が押されたとき（タブで切り替えてすぐ始めるときや、延長中に一時停止から戻るときにも使います）
+    function start() {
+      prepareAudio();  // お知らせの音を鳴らせるように、準備しておきます
+      if (mode === 'work') {
+        workStarted = true;  // 作業を始めたので、ここから先は、タブで切り替えるときに確認を出します
+      }
+      // 「今 + 残り時間」が終わる時刻です。
+      // 延長中は残り時間がマイナスなので、「終わる時刻」は過去になり、そこからの延長を数え続けられます
+      endTime = Date.now() + remainingMs;
+
+      // setInterval(処理, ミリ秒) で、処理を何度もくり返します。
+      // 1秒ちょうどだと表示が飛ぶことがあるので、少し短い 0.2 秒ごとにしています
+      intervalId = setInterval(tick, 200);
+      scheduleNextEvent();  // 次のお知らせの時刻の予約もしておきます
+
+      updateButtons();
+    }
+
+    // ［一時停止］が押されたとき
+    function pause() {
+      tick();       // 止める直前の残り時間を、正確に計算しておきます
+      stopTimer();  // remainingMs は残っているので、次のスタートで続きから動きます
+    }
+
+    // ［リセット］が押されたとき
+    function reset() {
+      recordOvertime();  // 延長中なら、延長した時間を集中時間に足しておきます
+      stopTimer();
+      // 休憩中に押しても、いちばん最初（作業の始め）に戻します。
+      // 途中で止めた作業は、トマトにも集中時間にも数えません。
+      // 連続の回数も、ここでは数え直しません（数え直すのはたっぷり休憩を取ったときだけ）
+      switchMode('work');
+    }
+
+    // いちばん上のタブが押されたとき。newMode は押されたタブのモードの名前です
+    function chooseMode(newMode) {
+      // 今と同じモードのタブなら、何もしません
+      if (newMode === mode) {
+        return;
+      }
+
+      // 作業の途中（まだ時間が終わっていない）で切り替えると、その作業は 🍅 にならないので、
+      // 確認画面を出して、ほんとうに切り替えるか確かめます。
+      // 切り替えるかどうかは、確認画面のボタンが押されたときに決めます（いちばん下を見てください）
+      if (mode === 'work' && workStarted && !timeUp) {
+        pendingMode = newMode;      // どのタブが押されたかを覚えておきます
+        confirmDialog.showModal();  // 確認画面を出します
+        return;
+      }
+
+      switchTo(newMode);
+    }
+
+    // モードを切り替えて、すぐにカウントを始めます
+    function switchTo(newMode) {
+      recordOvertime();  // 延長中なら、延長した時間を集中時間に足しておきます
+      stopTimer();       // 今のカウントが動いていたら止めます
+      if (newMode === 'longBreak') {
+        workStreak = 0;  // たっぷり休憩を取ったので、連続の回数を数え直します
+      }
+      switchMode(newMode);  // この中で、お知らせも新しくなります
+      start();              // すぐにそのモードのカウントを始めます
+    }
+
+
+    // ==================================================
+    //  ボタンと設定欄の登録、ページを開いたときの準備
+    // ==================================================
+
+    // --- ボタンが押されたら、上の処理を呼ぶように登録します ---
+    // addEventListener('click', 処理) は「クリックされたら、この処理をしてね」という意味です
+    startButton.addEventListener('click', start);
+    pauseButton.addEventListener('click', pause);
+    resetButton.addEventListener('click', reset);
+
+    // 3つのタブも、押されたら chooseMode を呼びます。
+    // tab.dataset.mode で、HTML に書いた data-mode="…" の値（'work' など）を取り出せます
+    for (const tab of modeTabs) {
+      tab.addEventListener('click', () => chooseMode(tab.dataset.mode));
+    }
+
+    // 確認画面のボタン。close() で確認画面を閉じます
+    confirmOkButton.addEventListener('click', () => {
+      confirmDialog.close();
+      switchTo(pendingMode);  // 「切り替える」なら、覚えておいたモードに切り替えます
+    });
+    confirmCancelButton.addEventListener('click', () => {
+      confirmDialog.close();  // 「作業を続ける」なら、閉じるだけです（Esc キーでも閉じられます）
+    });
+
+    // スライダーは、つまみを動かしている間ずっと 'input' が起きます。
+    // そのたびに呼ぶので、動かしながら「25分」の表示が変わります
+    for (const key in settingInputs) {
+      settingInputs[key].addEventListener('input', () => changeSetting(key));
+    }
+
+    // --- ページを開いたときに、最初の表示を整えます ---
+    // 読み込んだ設定を、スライダーと「〇分」の表示に入れます
+    for (const key in settingInputs) {
+      showSetting(key);
+    }
+    switchMode('work');  // この中で updateButtons() と updateMessage() も呼ばれます
+    checkNewDay();       // 前に開いたのが昨日以前なら、今日の分を 0 にします
+    updateTomatoes(false);
+    showTomatoGuide();
+    updateFocusTime();
+
+    // 0時をまたいでも「今日の集中時間」が数え直されるように、1分（60,000ミリ秒）ごとに日付を確かめます
+    setInterval(checkNewDay, 60 * 1000);
+  </script>
+</body>
+</html>
