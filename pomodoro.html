@@ -454,6 +454,7 @@
     let workStreak = 0;                    // 作業を連続で何回やり切ったか（たっぷり休憩を取ると 0 に戻る）
     let audioContext = null;               // 音を作るための道具（最初にボタンが押されたときに用意します）
     let shownTomatoes = records.tomatoes;  // 画面に出している 🍅 の数（1個ずつ増やして見せるために、記録とは別に持ちます）
+    let receivedOnOpen = 0;                // ページを開いたときに、前回の作業から受け取った 🍅 の数（お知らせに使います）
 
 
     // ==================================================
@@ -571,6 +572,9 @@
         todayDate: getTodayString(),  // 「今日の集中時間」が、何日の分か
         todayMinutes: 0,              // 今日の集中時間（分）
         todayTomatoes: 0,             // 今日集めたトマトの数
+        // やり切ったけれど、まだ受け取っていない作業のメモ（延長中に、タブを閉じても残るようにするためです）
+        pendingWorkMinutes: 0,        // まだ受け取っていない作業の分数（0 なら、受け取っていないものはなし）
+        pendingExtraMinutes: 0,       // その作業のあとに延長した分数
       };
       try {
         const saved = JSON.parse(localStorage.getItem(RECORDS_KEY));
@@ -580,6 +584,8 @@
           if (typeof saved.todayDate === 'string') loaded.todayDate = saved.todayDate;
           if (isCount(saved.todayMinutes)) loaded.todayMinutes = saved.todayMinutes;
           if (isCount(saved.todayTomatoes)) loaded.todayTomatoes = saved.todayTomatoes;
+          if (isCount(saved.pendingWorkMinutes)) loaded.pendingWorkMinutes = saved.pendingWorkMinutes;
+          if (isCount(saved.pendingExtraMinutes)) loaded.pendingExtraMinutes = saved.pendingExtraMinutes;
         }
       } catch (error) {
         // 読み込めなかったときは、0 から始めます
@@ -621,19 +627,20 @@
       updateFocusTime();
     }
 
-    // 作業を最後までやり切ったときに呼ばれて、トマトを増やし、集中時間を足します。
-    // minutes は、やり切った作業の分数です。5分ごとに 🍅 が1個増えます
-    function addRecord(minutes) {
-      const newTomatoes = Math.floor(minutes / MINUTES_PER_TOMATO);  // 例：25分 → 5個
+    // やり切った作業を記録して、トマトを増やし、集中時間を足します。
+    // workMinutes は作業の分数（5分ごとに 🍅 が1個）、extraMinutes は延長した分数（集中時間にだけ足します）
+    function addRecord(workMinutes, extraMinutes) {
+      const newTomatoes = Math.floor(workMinutes / MINUTES_PER_TOMATO);  // 例：25分 → 5個
       checkNewDay();  // 先に日付を確かめて、日をまたいでいたら今日の分を 0 にしておきます
       records.tomatoes += newTomatoes;
       records.todayTomatoes += newTomatoes;
       saveRecords();  // 記録は、先にまとめて保存しておきます
-      addFocusMinutes(minutes);
+      addFocusMinutes(workMinutes + extraMinutes);
 
       // 画面のほうは、0.35秒おきに1個ずつ増やして、1つずつ増えていく様子を見せます。
+      // 最初の1個（i = 0）は、待たずにすぐ出します。
       // setTimeout(処理, ミリ秒) は「この時間がたったら、1回だけ処理をしてね」という予約です
-      for (let i = 1; i <= newTomatoes; i++) {
+      for (let i = 0; i < newTomatoes; i++) {
         setTimeout(() => {
           shownTomatoes++;
           updateTomatoes(true);  // true は「増えたものを弾ませてね」という合図です
@@ -805,7 +812,7 @@
         const extraMinutes = reminderCount * REMINDER_INTERVAL_MS / 60000;  // 延長した分数（5, 10, …）
         if (mode === 'work') {
           if (reminderCount === 0) {
-            lines.push('🍅 ゲット！切りのいいところで「休憩」タブを押してね');
+            lines.push('作業おわり！切りのいいところで休憩タブを押すと 🍅 がもらえます');
           } else {
             lines.push('+' + extraMinutes + '分 延長中です。そろそろ休憩しませんか？');
           }
@@ -816,6 +823,9 @@
             lines.push('+' + extraMinutes + '分 休憩を延長中です。そろそろ作業に戻りませんか？');
           }
         }
+      }
+      if (receivedOnOpen > 0) {
+        lines.push('前回の作業の 🍅 ' + receivedOnOpen + '個を受け取りました');
       }
       if (workStreak >= STREAK_FOR_MESSAGE) {
         lines.push('4回連続でがんばりました！たっぷり休憩はいかが？');
@@ -886,6 +896,15 @@
         updateMessage();
         scheduleNextEvent();
       }
+
+      // 作業の延長中は、延長した分数が1分ふえるたびに、メモを書きかえて保存します
+      if (mode === 'work' && timeUp) {
+        const extraMinutes = Math.floor(-remainingMs / 60000);  // 60000ミリ秒 = 1分
+        if (extraMinutes !== records.pendingExtraMinutes) {
+          records.pendingExtraMinutes = extraMinutes;
+          saveRecords();
+        }
+      }
       updateDisplay();
     }
 
@@ -901,23 +920,38 @@
       if (mode === 'work') {
         // 作業を最後までやり切ったので、連続の回数を1増やします（++ は「1増やす」という意味）
         workStreak++;
-        addRecord(currentMinutes);  // トマトを1つ増やし、集中時間を足します
+        // 🍅 と集中時間は、ここではまだ増やしません。休憩のタブを押したときに増やします。
+        // そのかわり「まだ受け取っていない作業」としてメモして保存しておきます。
+        // こうすると、受け取る前にタブを閉じても、次に開いたときに受け取れます
+        records.pendingWorkMinutes = currentMinutes;
+        records.pendingExtraMinutes = 0;
+        saveRecords();
       }
       playDoneChime();       // お知らせの音
-      updateMessage();       // 「🍅 ゲット！」や「休憩おわり！」のお知らせを出します
+      updateMessage();       // 「作業おわり！」や「休憩おわり！」のお知らせを出します
       scheduleNextEvent();   // 次は、5分後のお知らせを予約します
     }
 
-    // 作業の延長時間（1分未満は切り捨て）を、集中時間に足します。休憩の延長は足しません。
-    // 延長中にタブを切り替えたり、リセットしたりしたときに呼びます
-    function recordOvertime() {
-      if (!(mode === 'work' && timeUp)) {
-        return;  // 作業の延長中でなければ、何もしません
+    // まだ受け取っていない作業（メモ）の 🍅 と集中時間を受け取ります。
+    // 延長中に休憩のタブを押したり、リセットしたりしたときと、ページを開いたときに呼びます。
+    // 集中時間には、作業の時間と、延長した時間（1分未満は切り捨て）を足します。
+    // 受け取った 🍅 の数を返します（受け取るものがなければ 0）
+    function collectWorkRecord() {
+      if (records.pendingWorkMinutes === 0) {
+        return 0;  // 受け取っていない作業がなければ、何もしません
       }
-      if (intervalId !== null) {
-        remainingMs = endTime - Date.now();  // 動いているときは、今の延長時間を計算し直します
+      // 延長中でカウントが動いているときは、今の延長時間を計算し直してメモに入れます
+      if (mode === 'work' && timeUp && intervalId !== null) {
+        remainingMs = endTime - Date.now();
+        records.pendingExtraMinutes = Math.floor(-remainingMs / 60000);  // 60000ミリ秒 = 1分
       }
-      addFocusMinutes(Math.floor(-remainingMs / 60000));  // 60000ミリ秒 = 1分
+      const workMinutes = records.pendingWorkMinutes;
+      const extraMinutes = records.pendingExtraMinutes;
+      // 2回受け取らないように、先にメモを消しておきます（保存は addRecord の中でします）
+      records.pendingWorkMinutes = 0;
+      records.pendingExtraMinutes = 0;
+      addRecord(workMinutes, extraMinutes);
+      return Math.floor(workMinutes / MINUTES_PER_TOMATO);
     }
 
     // 次に「何かが起きる時刻」（作業や休憩の終わり、延長中のお知らせ）に、tick() を1回呼ぶ予約をします。
@@ -951,6 +985,10 @@
     // ［スタート］が押されたとき（タブで切り替えてすぐ始めるときや、延長中に一時停止から戻るときにも使います）
     function start() {
       prepareAudio();  // お知らせの音を鳴らせるように、準備しておきます
+      if (receivedOnOpen > 0) {
+        receivedOnOpen = 0;  // 「前回の作業の 🍅 を受け取りました」のお知らせは、スタートしたら消します
+        updateMessage();
+      }
       if (mode === 'work') {
         workStarted = true;  // 作業を始めたので、ここから先は、タブで切り替えるときに確認を出します
       }
@@ -974,7 +1012,7 @@
 
     // ［リセット］が押されたとき
     function reset() {
-      recordOvertime();  // 延長中なら、延長した時間を集中時間に足しておきます
+      collectWorkRecord();  // 作業をやり切ったあとなら、🍅 と集中時間を受け取ります
       stopTimer();
       // 休憩中に押しても、いちばん最初（作業の始め）に戻します。
       // 途中で止めた作業は、トマトにも集中時間にも数えません。
@@ -1003,8 +1041,8 @@
 
     // モードを切り替えて、すぐにカウントを始めます
     function switchTo(newMode) {
-      recordOvertime();  // 延長中なら、延長した時間を集中時間に足しておきます
-      stopTimer();       // 今のカウントが動いていたら止めます
+      collectWorkRecord();  // 作業をやり切ったあとなら、🍅 と集中時間を受け取ります
+      stopTimer();          // 今のカウントが動いていたら止めます
       if (newMode === 'longBreak') {
         workStreak = 0;  // たっぷり休憩を取ったので、連続の回数を数え直します
       }
@@ -1054,6 +1092,10 @@
     updateTomatoes(false);
     showTomatoGuide();
     updateFocusTime();
+
+    // 前回、延長中にタブを閉じていて、まだ受け取っていない作業があれば、ここで受け取ります
+    receivedOnOpen = collectWorkRecord();
+    updateMessage();
 
     // 0時をまたいでも「今日の集中時間」が数え直されるように、1分（60,000ミリ秒）ごとに日付を確かめます
     setInterval(checkNewDay, 60 * 1000);
